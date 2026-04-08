@@ -6,16 +6,13 @@ const CACHE_DIR = resolve(process.cwd(), ".leakguard", "cache");
 
 export interface CacheKeyInput {
   sourceCode: string;
-  promptTemplateVersion: string;
-  languageContextVersion: string;
+  promptFingerprint: string;
   modelerVersion: string;
   redactionPolicyVersion: string;
 }
 
 export function buildCacheKey(input: CacheKeyInput): string {
-  return sha256(
-    `${input.sourceCode}|${input.promptTemplateVersion}|${input.languageContextVersion}|${input.modelerVersion}|${input.redactionPolicyVersion}`
-  );
+  return sha256(`${input.sourceCode}|${input.promptFingerprint}|${input.modelerVersion}|${input.redactionPolicyVersion}`);
 }
 
 function cachePath(key: string): string {

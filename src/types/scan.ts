@@ -2,7 +2,7 @@ export type Language = "go" | "python" | "typescript" | "java" | "rust" | "c" | 
 
 export type CallCategory = "resource_acquire" | "resource_release" | "other";
 
-export type ExitPointType = "return" | "throw" | "panic" | "exit" | "break" | "continue";
+export type ExitPointType = "return" | "throw" | "panic" | "exit" | "fallthrough";
 
 export interface ScannedCall {
   name: string;
@@ -21,6 +21,12 @@ export interface ErrorHandler {
   type: string;
   startLine: number;
   endLine: number;
+}
+
+export interface LineBranchContext {
+  branchId: string;
+  branchLine: number;
+  choice: string;
 }
 
 export interface CFGNode {
@@ -51,6 +57,8 @@ export interface ScannedFunction {
   calls: ScannedCall[];
   exitPoints: ExitPoint[];
   errorHandlers: ErrorHandler[];
+  branchLines: number[];
+  lineContexts: Record<number, LineBranchContext[]>;
   cfg: FunctionCFG;
   hash: string;
 }

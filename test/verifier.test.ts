@@ -49,9 +49,24 @@ describe("verifier", () => {
     expect(verified.filteredFalsePositives).toBeGreaterThan(0);
   });
 
+  it("suppresses only the explicitly ignored exit path", async () => {
+    const verified = await scanModelVerify("test/fixtures/go/partial_ignored_leak.go", ["go"]);
+
+    expect(verified.defects.length).toBe(1);
+    expect(verified.filteredFalsePositives).toBe(1);
+  });
+
   it("downgrades test-file severity to info", async () => {
     const verified = await scanModelVerify("test/fixtures/go/leaky_test.go", ["go"]);
     expect(verified.defects.length).toBeGreaterThan(0);
     expect(verified.defects.every((defect) => defect.severity === "info")).toBe(true);
+  });
+
+  it("does not let a release from a different branch hide a leak", async () => {
+    const verified = await scanModelVerify("test/fixtures/go/branch_release_mismatch.go", ["go"]);
+
+    expect(verified.defects.length).toBeGreaterThan(0);
+    expect(verified.defects[0].missingRelease.exitPoint.type).toBe("return");
+    expect(verified.defects[0].trace.branchLines.length).toBeGreaterThan(0);
   });
 });

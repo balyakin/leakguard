@@ -1,3 +1,5 @@
+import type { ExitPointType } from "./scan.js";
+
 export type ResourceType =
   | "transaction"
   | "file_handle"
@@ -31,6 +33,8 @@ export interface ExecutionPathModel {
   id: string;
   description: string;
   lines: [number, number];
+  branchLines?: number[];
+  exitType?: ExitPointType;
   resourceReleased: boolean;
   releaseMechanism: "direct_call" | "defer" | "finally" | "with_statement" | "RAII" | "none";
   notes: string;

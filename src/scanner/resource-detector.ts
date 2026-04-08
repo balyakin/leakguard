@@ -30,6 +30,46 @@ function detectVariableName(line: string): string | undefined {
   return match?.[1];
 }
 
+function extractReceiverVariable(callName: string): string | undefined {
+  const dotIndex = callName.lastIndexOf(".");
+  const arrowIndex = callName.lastIndexOf("->");
+  const separatorIndex = Math.max(dotIndex, arrowIndex);
+
+  if (separatorIndex <= 0) {
+    return undefined;
+  }
+
+  const receiver = callName.slice(0, separatorIndex).trim();
+  const receiverMatch = receiver.match(/([A-Za-z_]\w*)$/);
+  return receiverMatch?.[1];
+}
+
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractArgumentVariable(line: string, callName: string): string | undefined {
+  const pattern = new RegExp(`${escapeForRegex(callName)}\\s*\\(\\s*([A-Za-z_][A-Za-z0-9_]*)`);
+  const match = line.match(pattern);
+  return match?.[1];
+}
+
+function detectCallVariable(line: string, callName: string, category: ScannedCall["category"]): string | undefined {
+  if (category === "resource_acquire") {
+    const assignedVariable = detectVariableName(line);
+    if (assignedVariable) {
+      return assignedVariable;
+    }
+  }
+
+  const receiverVariable = extractReceiverVariable(callName);
+  if (receiverVariable) {
+    return receiverVariable;
+  }
+
+  return extractArgumentVariable(line, callName);
+}
+
 function classifyCall(language: Language, callName: string): ScannedCall["category"] {
   const rules = getLanguageRules(language);
   if (rules.acquirePatterns.some((pattern) => pattern.test(callName))) {
@@ -54,13 +94,12 @@ function detectExitPointType(line: string): ExitPoint["type"] | null {
   if (/\b(?:os\.)?exit\s*\(/.test(line)) {
     return "exit";
   }
-  if (/\bbreak\b/.test(line)) {
-    return "break";
-  }
-  if (/\bcontinue\b/.test(line)) {
-    return "continue";
-  }
   return null;
+}
+
+function isMeaningfulLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length > 0 && trimmed !== "{" && trimmed !== "}" && trimmed !== "};";
 }
 
 function detectErrorHandlerType(line: string): string | null {
@@ -88,7 +127,12 @@ function detectErrorHandlerType(line: string): string | null {
   return null;
 }
 
-export function detectFunctionFlowSignals(language: Language, source: string, startLine: number): FunctionFlowSignals {
+export function detectFunctionFlowSignals(
+  language: Language,
+  source: string,
+  startLine: number,
+  endLine: number
+): FunctionFlowSignals {
   const calls: ScannedCall[] = [];
   const exitPoints: ExitPoint[] = [];
   const errorHandlers: ErrorHandler[] = [];
@@ -106,7 +150,7 @@ export function detectFunctionFlowSignals(language: Language, source: string, st
         name: callName,
         line: lineNumber,
         category,
-        variable: category === "resource_acquire" ? detectVariableName(line) : undefined
+        variable: detectCallVariable(line, callName, category)
       });
     }
 
@@ -122,6 +166,27 @@ export function detectFunctionFlowSignals(language: Language, source: string, st
         type: errorType,
         startLine: lineNumber,
         endLine: lineNumber
+      });
+    }
+  }
+
+  let lastMeaningfulLine = startLine;
+  let lastMeaningfulText = "";
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (isMeaningfulLine(lines[index])) {
+      lastMeaningfulLine = startLine + index;
+      lastMeaningfulText = lines[index];
+      break;
+    }
+  }
+
+  if (!detectExitPointType(lastMeaningfulText)) {
+    const lastExit = exitPoints[exitPoints.length - 1];
+    if (!lastExit || lastExit.line !== endLine || lastExit.type !== "fallthrough") {
+      exitPoints.push({
+        type: "fallthrough",
+        line: endLine,
+        inErrorHandler: false
       });
     }
   }

@@ -5,8 +5,46 @@ export function isPathReachable(cfg: FunctionCFG, fromLine: number, toLine: numb
     return false;
   }
 
-  const hasFrom = cfg.nodes.some((node) => node.line === fromLine || (node.line <= fromLine && node.kind === "entry"));
-  const hasTo = cfg.nodes.some((node) => node.line === toLine || (node.line >= toLine && node.kind === "exit"));
+  const fromNode = cfg.nodes.find((node) => node.line === fromLine && node.kind !== "entry");
+  const toNode = cfg.nodes.find((node) => node.line === toLine && node.kind !== "entry");
 
-  return hasFrom && hasTo;
+  if (!fromNode || !toNode) {
+    return false;
+  }
+
+  if (fromNode.id === toNode.id) {
+    return true;
+  }
+
+  const edgesBySource = new Map<string, string[]>();
+  for (const edge of cfg.edges) {
+    const entries = edgesBySource.get(edge.from) ?? [];
+    entries.push(edge.to);
+    edgesBySource.set(edge.from, entries);
+  }
+
+  const visited = new Set<string>();
+  const queue = [fromNode.id];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) {
+      continue;
+    }
+
+    if (current === toNode.id) {
+      return true;
+    }
+
+    visited.add(current);
+
+    const targets = edgesBySource.get(current) ?? [];
+    for (const target of targets) {
+      if (!visited.has(target)) {
+        queue.push(target);
+      }
+    }
+  }
+
+  return false;
 }

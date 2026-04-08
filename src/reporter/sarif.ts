@@ -7,6 +7,30 @@ const SEVERITY_LEVEL: Record<Defect["severity"], "error" | "warning" | "note"> =
 };
 
 export function renderSarifReport(defects: Defect[]): string {
+  const rulesById = new Map<string, {
+    id: string;
+    shortDescription: { text: string };
+    properties: {
+      precision: Defect["confidence"];
+      tags: string[];
+    };
+  }>();
+
+  for (const defect of defects) {
+    if (rulesById.has(defect.id)) {
+      continue;
+    }
+
+    rulesById.set(defect.id, {
+      id: defect.id,
+      shortDescription: { text: defect.title },
+      properties: {
+        precision: defect.confidence,
+        tags: [defect.relatedCwe]
+      }
+    });
+  }
+
   const sarif = {
     $schema: "https://json.schemastore.org/sarif-2.1.0.json",
     version: "2.1.0",
@@ -16,14 +40,7 @@ export function renderSarifReport(defects: Defect[]): string {
           driver: {
             name: "LeakGuard",
             version: "0.1.0",
-            rules: defects.map((defect) => ({
-              id: defect.id,
-              shortDescription: { text: defect.title },
-              properties: {
-                precision: defect.confidence,
-                tags: [defect.relatedCwe]
-              }
-            }))
+            rules: [...rulesById.values()]
           }
         },
         results: defects.map((defect) => ({

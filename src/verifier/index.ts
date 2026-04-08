@@ -126,12 +126,8 @@ function lineExists(fn: ScannedFunction, line: number): boolean {
 }
 
 function hasInlineIgnore(scanned: ScannedFunction, moduleSource: string, line: number): boolean {
-  if (scanned.source.includes(INLINE_IGNORE_TAG)) {
-    return true;
-  }
-
   const lines = moduleSource.split(/\r?\n/);
-  const inspect = [line - 1, line, scanned.startLine - 1, scanned.startLine];
+  const inspect = [line - 1, line];
   for (const currentLine of inspect) {
     if (currentLine < 1 || currentLine > lines.length) {
       continue;
@@ -142,6 +138,32 @@ function hasInlineIgnore(scanned: ScannedFunction, moduleSource: string, line: n
   }
 
   return false;
+}
+
+function traceBranchLines(scanned: ScannedFunction, branchLines: number[] | undefined, acquireLine: number, exitLine: number): number[] {
+  if (branchLines && branchLines.length > 0) {
+    return [...new Set(branchLines)].sort((left, right) => left - right);
+  }
+
+  const exitContexts = scanned.lineContexts[exitLine] ?? [];
+  const lines = new Set<number>();
+
+  for (const context of exitContexts) {
+    if (context.branchLine > acquireLine && context.branchLine <= exitLine) {
+      lines.add(context.branchLine);
+    }
+  }
+
+  return [...lines].sort((left, right) => left - right);
+}
+
+function exitTypeFor(scanned: ScannedFunction, exitLine: number, explicit?: string): string {
+  if (explicit) {
+    return explicit;
+  }
+
+  const match = scanned.exitPoints.find((exitPoint) => exitPoint.line === exitLine);
+  return match?.type ?? "return";
 }
 
 function buildDefects(
@@ -189,6 +211,8 @@ function buildDefects(
         linesVerified,
         hasPotentialImplicitRelease: implicitRelease
       });
+      const branchLines = traceBranchLines(scanned, path.branchLines, resource.acquire.line, leakingExitLine);
+      const exitType = exitTypeFor(scanned, leakingExitLine, path.exitType);
 
       const fingerprint = sha1(`${scanned.file}${scanned.function}${resource.acquire.line}${leakingExitLine}${expected}`);
       const id = `LG-${fingerprint.slice(0, 8)}`;
@@ -216,14 +240,14 @@ function buildDefects(
           expectedRelease: expected,
           exitPoint: {
             line: leakingExitLine,
-            type: "return"
+            type: exitType
           }
         },
         trace: {
           acquireLine: resource.acquire.line,
-          branchLines: [],
+          branchLines,
           leakingExitLine,
-          path: [resource.acquire.line, leakingExitLine]
+          path: [resource.acquire.line, ...branchLines, leakingExitLine]
         },
         suggestion: suggestionFor(scanned, resource.acquire.variable, expected),
         autofix: {

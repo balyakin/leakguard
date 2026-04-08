@@ -73,6 +73,17 @@ function toCamelCaseModel(input: Record<string, unknown>): FunctionResourceModel
               Number((entry.lines as number[] | undefined)?.[0] ?? 0),
               Number((entry.lines as number[] | undefined)?.[1] ?? 0)
             ] as [number, number],
+            branchLines: Array.isArray(entry.branch_lines)
+              ? entry.branch_lines.map((line) => Number(line))
+              : undefined,
+            exitType:
+              entry.exit_type === "return" ||
+              entry.exit_type === "throw" ||
+              entry.exit_type === "panic" ||
+              entry.exit_type === "exit" ||
+              entry.exit_type === "fallthrough"
+                ? (entry.exit_type as FunctionResourceModel["resources"][number]["executionPaths"][number]["exitType"])
+                : undefined,
             resourceReleased: Boolean(entry.resource_released),
             releaseMechanism: (entry.release_mechanism as
               | "direct_call"

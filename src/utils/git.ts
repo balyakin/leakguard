@@ -26,7 +26,8 @@ export async function getChangedFiles(baseRef: string): Promise<Set<string>> {
         .map((line) => line.trim())
         .filter(Boolean)
     );
-  } catch {
-    return new Set<string>();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Unable to resolve changed files from base ref '${baseRef}': ${message}`);
   }
 }

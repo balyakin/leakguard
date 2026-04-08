@@ -16,7 +16,8 @@ export interface ParsedFunction {
 }
 
 type ParserLanguage = Parameters<Parser["setLanguage"]>[0];
-type SyntaxNode = Parser.SyntaxNode;
+export type SyntaxNode = Parser.SyntaxNode;
+type SyntaxTree = Parser.Tree;
 
 interface ParserDefinition {
   grammar: ParserLanguage;
@@ -36,7 +37,7 @@ const PARSER_DEFINITIONS: Record<Language, ParserDefinition> = {
   },
   typescript: {
     grammar: TYPESCRIPT_GRAMMAR,
-    functionNodeTypes: new Set(["function_declaration", "method_definition"])
+    functionNodeTypes: new Set(["function_declaration", "function_expression", "arrow_function", "method_definition"])
   },
   java: {
     grammar: TreeSitterJava as ParserLanguage,
@@ -55,6 +56,20 @@ const PARSER_DEFINITIONS: Record<Language, ParserDefinition> = {
     functionNodeTypes: new Set(["function_definition"])
   }
 };
+
+const PARSER_CACHE = new Map<Language, Parser>();
+
+function getParser(language: Language): Parser {
+  const cached = PARSER_CACHE.get(language);
+  if (cached) {
+    return cached;
+  }
+
+  const parser = new Parser();
+  parser.setLanguage(PARSER_DEFINITIONS[language].grammar);
+  PARSER_CACHE.set(language, parser);
+  return parser;
+}
 
 function extractNodeText(source: string, node: SyntaxNode): string {
   return source.slice(node.startIndex, node.endIndex);
@@ -141,10 +156,7 @@ export function extractFunctionsFromSource(
   minFunctionLines: number
 ): ParsedFunction[] {
   const definition = PARSER_DEFINITIONS[language];
-  const parser = new Parser();
-  parser.setLanguage(definition.grammar);
-
-  const tree = parser.parse(source);
+  const tree = parseSyntaxTree(language, source);
   const functions: ParsedFunction[] = [];
 
   visitNode(tree.rootNode, (node) => {
@@ -167,4 +179,8 @@ export function extractFunctionsFromSource(
   });
 
   return deduplicate(functions);
+}
+
+export function parseSyntaxTree(language: Language, source: string): SyntaxTree {
+  return getParser(language).parse(source);
 }

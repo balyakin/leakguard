@@ -5,6 +5,7 @@ import type { Logger } from "../utils/logger.js";
 import { sha256 } from "../utils/hash.js";
 import type { Language, ScanResult, ScannedFunction } from "../types/scan.js";
 import { buildFunctionCfg } from "./cfg-builder.js";
+import { analyzeControlFlow } from "./control-flow.js";
 import { detectLanguageByExtension, supportedExtensionsFor } from "./languages/index.js";
 import { extractFunctionsFromSource } from "./parser.js";
 import { detectFunctionFlowSignals, isResourceRelevant } from "./resource-detector.js";
@@ -97,12 +98,16 @@ export async function runScanner(options: ScannerOptions): Promise<ScanResult> {
     const parsed = extractFunctionsFromSource(language, source, options.minFunctionLines);
 
     for (const fn of parsed) {
-      const flow = detectFunctionFlowSignals(language, fn.source, fn.startLine);
+      const flow = detectFunctionFlowSignals(language, fn.source, fn.startLine, fn.endLine);
+      const controlFlow = analyzeControlFlow(language, fn.source, fn.startLine);
       const cfg = buildFunctionCfg({
         startLine: fn.startLine,
         endLine: fn.endLine,
         calls: flow.calls,
-        exitPoints: flow.exitPoints
+        exitPoints: flow.exitPoints,
+        branchLines: controlFlow.branchLines,
+        branchEdges: controlFlow.branchEdges,
+        lineContexts: controlFlow.lineContexts
       });
 
       const scannedFunction: ScannedFunction = {
@@ -116,6 +121,8 @@ export async function runScanner(options: ScannerOptions): Promise<ScanResult> {
         calls: flow.calls,
         exitPoints: flow.exitPoints,
         errorHandlers: flow.errorHandlers,
+        branchLines: controlFlow.branchLines,
+        lineContexts: controlFlow.lineContexts,
         cfg,
         hash: sha256(fn.source)
       };

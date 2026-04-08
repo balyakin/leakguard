@@ -11,17 +11,23 @@ import type {
 } from "../types/model.js";
 import type { ScannedCall, ScannedFunction } from "../types/scan.js";
 import { estimateCost } from "../utils/cost.js";
+import { sha256 } from "../utils/hash.js";
 import type { Logger } from "../utils/logger.js";
 import { redactSecrets } from "../utils/redaction.js";
 import { buildCacheKey, getCache, setCache } from "./cache.js";
 import { createLlmClient, type LlmClient } from "./llm-client.js";
-import { buildAnalyzeBatchPrompt, buildAnalyzePrompt } from "./prompt-builder.js";
+import {
+  buildAnalyzeBatchPrompt,
+  buildAnalyzePrompt,
+  loadAnalyzePromptAssets,
+  loadBatchPromptAssets
+} from "./prompt-builder.js";
 import { parseBatchModelResponse } from "./response-parser.js";
 
 const MODELER_VERSION = "0.2.0";
-const REDACTION_POLICY_VERSION = "1";
+const REDACTION_POLICY_VERSION = "2";
 const MAX_BATCH_FUNCTIONS = 5;
-const MAX_BATCH_TOKENS = 4000;
+const MAX_BATCH_TOKENS = 32000;
 
 export interface ModelerOptions {
   provider: ApiProvider;
@@ -40,6 +46,7 @@ interface PreparedFunction {
   fn: ScannedFunction;
   deterministicModel: FunctionResourceModel;
   cacheKey: string;
+  promptTokenEstimate: number;
 }
 
 interface BatchTask {
@@ -50,6 +57,10 @@ interface BatchTask {
 
 function estimateTokensFromChars(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
+}
+
+function redactionPolicyVersion(redactSecretsEnabled: boolean): string {
+  return `${REDACTION_POLICY_VERSION}:${redactSecretsEnabled ? "redacted" : "raw"}`;
 }
 
 function inferResourceType(callName: string): ResourceType {
@@ -110,22 +121,20 @@ function expectedReleaseForType(type: ResourceType, variable: string): ExpectedR
 
 function callMatchesResource(call: ScannedCall, variable: string, type: ResourceType): boolean {
   const lowerName = call.name.toLowerCase();
-  const lowerVariable = variable.toLowerCase();
+  const normalizedVariable = variable.toLowerCase();
+  const normalizedCallVariable = call.variable?.toLowerCase();
 
-  if (lowerName.includes(lowerVariable)) {
-    return true;
-  }
   if (type === "memory") {
-    return /\bfree\b/.test(lowerName);
+    return /\bfree\b/.test(lowerName) && normalizedCallVariable === normalizedVariable;
   }
   if (type === "context") {
     return /\bcancel\b/.test(lowerName);
   }
   if (type === "channel") {
-    return /\bclose\b/.test(lowerName);
+    return /\bclose\b/.test(lowerName) && normalizedCallVariable === normalizedVariable;
   }
 
-  return false;
+  return normalizedCallVariable === normalizedVariable;
 }
 
 function lineAt(fn: ScannedFunction, line: number): string {
@@ -169,6 +178,33 @@ function isAcquireFailurePath(fn: ScannedFunction, acquireLine: number, exitLine
   return false;
 }
 
+function releaseCoversExit(fn: ScannedFunction, releaseLine: number, exitLine: number): boolean {
+  const releaseContexts = fn.lineContexts[releaseLine] ?? [];
+  const exitContexts = fn.lineContexts[exitLine] ?? [];
+  const exitChoices = new Map(exitContexts.map((entry) => [entry.branchId, entry.choice]));
+
+  for (const context of releaseContexts) {
+    if (exitChoices.get(context.branchId) !== context.choice) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function branchLinesForPath(fn: ScannedFunction, acquireLine: number, exitLine: number): number[] {
+  const exitContexts = fn.lineContexts[exitLine] ?? [];
+  const branchLines = new Set<number>();
+
+  for (const context of exitContexts) {
+    if (context.branchLine > acquireLine && context.branchLine <= exitLine) {
+      branchLines.add(context.branchLine);
+    }
+  }
+
+  return [...branchLines].sort((left, right) => left - right);
+}
+
 function summarize(resources: ResourceLifecycle[]): FunctionResourceModel["summary"] {
   const totalPaths = resources.reduce((sum, resource) => sum + resource.executionPaths.length, 0);
   const pathsWithMissingRelease = resources.reduce(
@@ -185,7 +221,12 @@ function summarize(resources: ResourceLifecycle[]): FunctionResourceModel["summa
     riskLevel = "high";
   }
 
-  if (resources.some((resource) => resource.type === "transaction" || resource.type === "lock") && pathsWithMissingRelease > 0) {
+  if (
+    resources.some(
+      (resource) => resource.type === "transaction" || resource.type === "lock" || resource.type === "memory"
+    ) &&
+    pathsWithMissingRelease > 0
+  ) {
     riskLevel = "critical";
   }
 
@@ -214,7 +255,9 @@ function buildDeterministicModel(fn: ScannedFunction): FunctionResourceModel {
         expression: `${release.name}()`,
         line: release.line,
         onPath: `line ${release.line}`,
-        coversErrorPaths: fn.exitPoints.some((exit) => exit.inErrorHandler && release.line <= exit.line)
+        coversErrorPaths: fn.exitPoints.some(
+          (exit) => exit.inErrorHandler && release.line <= exit.line && releaseCoversExit(fn, release.line, exit.line)
+        )
       }));
 
     if (fn.language === "python" && resourceType === "file_handle") {
@@ -236,12 +279,19 @@ function buildDeterministicModel(fn: ScannedFunction): FunctionResourceModel {
         continue;
       }
 
-      const coveringRelease = actualReleases.find((release) => release.line <= exit.line);
+      const coveringRelease = [...actualReleases]
+        .reverse()
+        .find((release) => release.line <= exit.line && releaseCoversExit(fn, release.line, exit.line));
       const acquireFailurePath = isAcquireFailurePath(fn, acquire.line, exit.line) && exit.inErrorHandler;
       executionPaths.push({
         id: `path_${exitIndex + 1}`,
-        description: `${exit.type} at line ${exit.line}${exit.inErrorHandler ? " (error path)" : ""}`,
+        description:
+          exit.type === "fallthrough"
+            ? `normal completion at line ${exit.line}`
+            : `${exit.type} at line ${exit.line}${exit.inErrorHandler ? " (error path)" : ""}`,
         lines: [acquire.line, exit.line],
+        branchLines: branchLinesForPath(fn, acquire.line, exit.line),
+        exitType: exit.type,
         resourceReleased: Boolean(coveringRelease) || acquireFailurePath,
         releaseMechanism: coveringRelease ? releaseMechanism(fn, coveringRelease.line) : "none",
         notes: coveringRelease
@@ -251,18 +301,6 @@ function buildDeterministicModel(fn: ScannedFunction): FunctionResourceModel {
             : "No matching release before this exit"
       });
     }
-
-    const releaseOnHappyPath = actualReleases.find((release) => release.line <= fn.endLine);
-    executionPaths.push({
-      id: `path_happy_${index + 1}`,
-      description: `normal completion at line ${fn.endLine}`,
-      lines: [acquire.line, fn.endLine],
-      resourceReleased: Boolean(releaseOnHappyPath),
-      releaseMechanism: releaseOnHappyPath ? releaseMechanism(fn, releaseOnHappyPath.line) : "none",
-      notes: releaseOnHappyPath
-        ? `Release found at line ${releaseOnHappyPath.line}`
-        : "No matching release on normal completion"
-    });
 
     resources.push({
       id: `${resourceType}_${index + 1}`,
@@ -344,7 +382,7 @@ function createBatches(prepared: PreparedFunction[]): PreparedFunction[][] {
     let currentTokens = 0;
 
     for (const item of entries) {
-      const fnTokens = estimateTokensFromChars(item.fn.source);
+      const fnTokens = item.promptTokenEstimate;
       const wouldOverflowCount = current.length >= MAX_BATCH_FUNCTIONS;
       const wouldOverflowTokens = currentTokens + fnTokens > MAX_BATCH_TOKENS;
 
@@ -407,6 +445,9 @@ export async function runModeler(functions: ScannedFunction[], options: ModelerO
 
   const hasApiKey = Boolean(extractProviderApiKey(options.provider, options.apiKey)) || options.provider === "ollama";
   const llmEnabled = options.enableLlm !== false && hasApiKey;
+  const languages = [...new Set(functions.map((fn) => fn.language))];
+  const analyzePromptAssets = await loadAnalyzePromptAssets(languages);
+  const batchPromptAssets = await loadBatchPromptAssets(languages);
 
   const llmClient = llmEnabled
     ? createLlmClient({
@@ -421,13 +462,14 @@ export async function runModeler(functions: ScannedFunction[], options: ModelerO
     const deterministicModel = buildDeterministicModel(fn);
     deterministicById.set(fn.id, deterministicModel);
 
-    const promptData = await buildAnalyzePrompt(fn);
+    const promptData = await buildAnalyzePrompt(fn, analyzePromptAssets);
+    const promptPayload = options.redactSecrets ? redactSecrets(promptData.prompt).output : promptData.prompt;
+    const promptFingerprint = promptPayload === promptData.prompt ? promptData.promptFingerprint : sha256(promptPayload);
     const cacheKey = buildCacheKey({
       sourceCode: fn.source,
-      promptTemplateVersion: promptData.templateVersion,
-      languageContextVersion: promptData.languageContextVersion,
+      promptFingerprint,
       modelerVersion: MODELER_VERSION,
-      redactionPolicyVersion: REDACTION_POLICY_VERSION
+      redactionPolicyVersion: redactionPolicyVersion(options.redactSecrets)
     });
 
     if (!options.noCache) {
@@ -456,7 +498,8 @@ export async function runModeler(functions: ScannedFunction[], options: ModelerO
     pending.push({
       fn,
       deterministicModel,
-      cacheKey
+      cacheKey,
+      promptTokenEstimate: estimateTokensFromChars(promptPayload)
     });
   }
 
@@ -466,7 +509,10 @@ export async function runModeler(functions: ScannedFunction[], options: ModelerO
     const skippedByCost = new Set<string>();
 
     for (const batch of rawBatches) {
-      const promptData = await buildAnalyzeBatchPrompt(batch.map((item) => item.fn));
+      const promptData = await buildAnalyzeBatchPrompt(
+        batch.map((item) => item.fn),
+        batchPromptAssets
+      );
       const promptPayload = options.redactSecrets ? redactSecrets(promptData.prompt).output : promptData.prompt;
       const estimatedCost = estimateCost(options.model, promptPayload).totalUsd;
 

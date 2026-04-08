@@ -137,7 +137,15 @@ export async function executeScan(raw: ScanRunOptions): Promise<ScanExecutionRes
   const logger = createLogger(raw.verbose);
   const spinner = ora({ text: "Scanning codebase..." }).start();
 
-  const changedFiles = raw.changed ? await getChangedFiles(raw.baseRef) : undefined;
+  let changedFiles: Set<string> | undefined;
+  if (raw.changed) {
+    try {
+      changedFiles = await getChangedFiles(raw.baseRef);
+    } catch (error) {
+      spinner.fail("Failed to resolve changed files");
+      throw error;
+    }
+  }
   const languages: Language[] = raw.language
     ? [raw.language]
     : ["go", "python", "typescript", "java", "rust", "c", "cpp"];
