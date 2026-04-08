@@ -1,0 +1,4 @@
+Java-specific checks:
+- try-with-resources is safe for AutoCloseable
+- try/finally must close resources
+- ReentrantLock should be unlocked in finally

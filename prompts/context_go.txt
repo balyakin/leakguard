@@ -1,0 +1,5 @@
+Go-specific checks:
+- defer must be placed after successful acquire
+- verify if err != nil early returns
+- tx requires commit or rollback on all paths
+- http response body must be closed

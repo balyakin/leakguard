@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+.idea/
+.leakguard/
+.leakguard-baseline.json

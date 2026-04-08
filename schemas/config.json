@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "api": { "type": "object" },
+    "scan": { "type": "object" },
+    "report": { "type": "object" },
+    "ci": { "type": "object" },
+    "resources": { "type": "object" }
+  }
+}

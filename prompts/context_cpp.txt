@@ -1,0 +1,4 @@
+C++-specific checks:
+- delete/delete[] for new/new[]
+- prefer RAII and smart pointers
+- verify manual cleanup on exception/error returns

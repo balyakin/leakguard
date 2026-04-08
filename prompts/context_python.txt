@@ -1,0 +1,4 @@
+Python-specific checks:
+- prefer with/async with for resources
+- try/except without finally may leak resources
+- ensure .close() on all non-with paths

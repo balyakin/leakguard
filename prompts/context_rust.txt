@@ -1,0 +1,4 @@
+Rust-specific checks:
+- RAII usually handles cleanup
+- inspect unsafe blocks and ManuallyDrop
+- mem::forget and leak patterns may be intentional

@@ -1,0 +1,5 @@
+TypeScript/JavaScript-specific checks:
+- ensure cleanup in try/finally
+- verify promise rejection paths
+- event listeners require removeEventListener
+- timers require clearTimeout/clearInterval

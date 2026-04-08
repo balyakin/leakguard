@@ -1,0 +1,68 @@
+You are a resource lifecycle analyzer. Your task is to analyze the given function and produce a structured model of every resource that is acquired and must be released.
+
+## Definitions
+
+A "resource" is anything that is acquired/opened/locked/started and must be released/closed/unlocked/finished.
+
+## Output format
+
+Return ONLY a JSON object with this schema:
+
+{
+  "resources": [
+    {
+      "id": "resource_id",
+      "type": "transaction | file_handle | lock | connection | memory | context | channel | custom",
+      "acquire": {
+        "expression": "acquire expression",
+        "line": 1,
+        "variable": "resource variable"
+      },
+      "expected_releases": [
+        {
+          "expression": "release expression",
+          "type": "normal | error | cleanup",
+          "description": "when this release should happen"
+        }
+      ],
+      "actual_releases": [
+        {
+          "expression": "actual release expression",
+          "line": 1,
+          "on_path": "execution path",
+          "covers_error_paths": true
+        }
+      ],
+      "execution_paths": [
+        {
+          "id": "path_1",
+          "description": "execution path description",
+          "lines": [1, 2],
+          "resource_released": true,
+          "release_mechanism": "direct_call | defer | finally | with_statement | RAII | none",
+          "notes": "notes"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_resources": 0,
+    "total_paths": 0,
+    "paths_with_missing_release": 0,
+    "risk_level": "none | low | medium | high | critical"
+  }
+}
+
+## Rules
+
+1) Analyze all paths, including early returns, errors, and exception paths.
+2) Verify cleanup coverage for each acquired resource.
+3) Output valid JSON only.
+
+## Function to analyze
+
+Language: {language}
+File: {file_path}
+Function name: {function_name}
+
+{source_code}

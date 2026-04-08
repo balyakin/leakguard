@@ -1,0 +1,4 @@
+C-specific checks:
+- every malloc/calloc/realloc needs free on all paths
+- ensure fclose/close on all exits
+- goto cleanup pattern can be valid
